@@ -1,0 +1,467 @@
+﻿import argparse
+import requests
+import logging
+import os
+import json
+import time
+import pandas as pd
+from pathlib import Path
+
+
+# ----------------------------- Logging Setup -----------------------------
+logging.basicConfig(
+    format='%(asctime)s %(levelname)s: %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------- Kibana Client ------------------------------
+class KibanaClient:
+    def __init__(self, base_url, api_key):
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': api_key,
+            'kbn-xsrf': 'true',
+            'Content-Type': 'application/json'
+        })
+
+
+    def get(self, path, space_id=None, params=None):
+        if space_id:
+            url = f"{self.base_url}/s/{space_id}{path}"
+        else:
+            url = f"{self.base_url}{path}"
+
+
+        logger.debug(f"Requesting URL: {url}")
+        resp = self.session.get(url, params=params)
+        if resp.status_code != 200:
+            logger.warning(f"Failed: {url} - {resp.status_code} - {resp.text}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+    def fetch_spaces(self):
+        return self.get("/api/spaces/space")
+
+
+    def fetch_saved_objects(self, space_id):
+        return self.get("/api/saved_objects/_find", space_id, params={"per_page": 10000})
+
+
+    def fetch_rules(self, space_id):
+        return self.get("/api/detection_engine/rules/_find", space_id, params={"per_page": 10000})
+
+
+    def fetch_data_views(self, space_id):
+        return self.get("/api/data_views", space_id)
+
+
+    def fetch_data_streams(self):
+        return self.get("/_data_stream")
+
+
+# --------------------------- Export Utilities ----------------------------
+def write_excel(data_dict, output_path):
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        for sheet, data in data_dict.items():
+            df = pd.json_normalize(data)
+            df.to_excel(writer, index=False, sheet_name=sheet[:31])
+
+
+
+
+def write_ndjson(data, output_file):
+    with open(output_file, 'w') as f:
+        for obj in data:
+            f.write(json.dumps(obj) + '\n')
+
+
+
+
+def export_space_data(space_id, data, output_dir):
+    space_folder = Path(output_dir) / space_id
+    excel_dir = space_folder / "excel"
+    ndjson_dir = space_folder / "ndjson"
+    excel_dir.mkdir(parents=True, exist_ok=True)
+    ndjson_dir.mkdir(parents=True, exist_ok=True)
+
+
+    # Excel
+    excel_path = excel_dir / f"{space_id}.xlsx"
+    write_excel(data, excel_path)
+
+
+    # NDJSON
+    ndjson_path = ndjson_dir / f"{space_id}.ndjson"
+    combined = []
+    for obj_list in data.values():
+        combined.extend(obj_list)
+    write_ndjson(combined, ndjson_path)
+
+
+# ------------------------- Global Summary ---------------------------
+def export_global_summary(summary_data, output_dir):
+    summary_file = Path(output_dir) / "global_summary.xlsx"
+    df = pd.DataFrame(summary_data)
+    df.to_excel(summary_file, index=False)
+
+
+# ------------------------------- Main -----------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Export Kibana space data to Excel and NDJSON")
+    parser.add_argument('--kibana-url', required=True, help='Base URL of Kibana instance')
+    parser.add_argument('--api-key', required=True, help='API Key for authentication')
+    parser.add_argument('--output-dir', required=True, help='Directory to store exported files')
+    args = parser.parse_args()
+
+
+    client = KibanaClient(args.kibana_url, args.api_key)
+    output_dir = args.output_dir
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+
+    logger.info("Fetching spaces...")
+    spaces = client.fetch_spaces()
+
+
+    summary = []
+
+
+    for space in spaces:
+        space_id = space['id']
+        logger.info(f"Processing space: {space_id}")
+
+
+        saved_objects = client.fetch_saved_objects(space_id).get('saved_objects', [])
+        rules = client.fetch_rules(space_id).get('data', [])
+        data_views = client.fetch_data_views(space_id).get('data_view', [])
+
+
+        dashboards = [obj for obj in saved_objects if obj['type'] == 'dashboard']
+
+
+        export_space_data(space_id, {
+            "SavedObjects": saved_objects,
+            "Rules": rules,
+            "DataViews": data_views,
+            "Dashboards": dashboards
+        }, output_dir)
+
+
+        summary.append({
+            "space_id": space_id,
+            "saved_objects": len(saved_objects),
+            "rules": len(rules),
+            "data_views": len(data_views),
+            "dashboards": len(dashboards)
+        })
+
+
+    # Export global summary
+    logger.info("Exporting global summary...")
+    export_global_summary(summary, output_dir)
+
+
+    # Export data streams
+    logger.info("Fetching data streams...")
+    data_streams = client.fetch_data_streams().get('data_streams', [])
+    ds_folder = Path(output_dir) / "datastreams"
+    ds_folder.mkdir(parents=True, exist_ok=True)
+    write_ndjson(data_streams, ds_folder / "datastreams.ndjson")
+    write_excel({"DataStreams": data_streams}, ds_folder / "datastreams.xlsx")
+
+
+    logger.info("Export completed successfully.")
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+	
+
+
+
+
+
+import argparse
+import requests
+import logging
+import os
+import json
+import time
+import pandas as pd
+from pathlib import Path
+
+
+# ----------------------------- Logging Setup -----------------------------
+logging.basicConfig(
+    format='%(asctime)s %(levelname)s: %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------- Kibana Client ------------------------------
+class KibanaClient:
+    def __init__(self, base_url, api_key):
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': api_key,
+            'kbn-xsrf': 'true',
+            'Content-Type': 'application/json'
+        })
+
+
+    def get(self, path, space_id=None, params=None):
+        if space_id:
+            url = f"{self.base_url}/s/{space_id}{path}"
+        else:
+            url = f"{self.base_url}{path}"
+
+
+        logger.debug(f"Requesting URL: {url}")
+        resp = self.session.get(url, params=params)
+        if resp.status_code != 200:
+            logger.warning(f"Failed: {url} - {resp.status_code} - {resp.text}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+    def fetch_spaces(self):
+        return self.get("/api/spaces/space")
+
+
+    def fetch_saved_objects(self, space_id):
+        return self.get("/api/saved_objects/_find", space_id, params={"per_page": 10000})
+
+
+    def fetch_rules(self, space_id):
+        return self.get("/api/detection_engine/rules/_find", space_id, params={"per_page": 10000})
+
+
+    def fetch_data_views(self, space_id):
+        return self.get("/api/data_views", space_id)
+
+
+    def fetch_data_streams(self):
+        return self.get("/_data_stream")
+
+
+# --------------------------- Export Utilities ----------------------------
+def write_excel(data_dict, output_path):
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        for sheet, data in data_dict.items():
+            df = pd.json_normalize(data)
+            df.to_excel(writer, index=False, sheet_name=sheet[:31])
+
+
+
+
+def write_ndjson(data, output_file):
+    with open(output_file, 'w') as f:
+        for obj in data:
+            f.write(json.dumps(obj) + '\n')
+
+
+
+
+def extract_dashboard_summary(dashboards):
+    summary = []
+    for dash in dashboards:
+        attrs = dash.get('attributes', {})
+        summary.append({
+            'name': attrs.get('title'),
+            'description': attrs.get('description', ''),
+            'created_by': dash.get('created_by', 'Unknown'),
+            'visualization_count': len(dash.get('references', []))
+        })
+    return summary
+
+
+
+
+def extract_rules_summary(rules):
+    return [{
+        'name': rule.get('name'),
+        'rule_id': rule.get('rule_id'),
+        'created_by': rule.get('created_by', 'Unknown'),
+        'updated_at': rule.get('updated_at'),
+        'enabled': rule.get('enabled'),
+        'severity': rule.get('severity'),
+        'type': rule.get('type'),
+        'tags': ', '.join(rule.get('tags', [])),
+        'last_execution_date': rule.get('last_execution_date')
+    } for rule in rules]
+
+
+
+
+def export_space_data(space_id, data, output_dir):
+    space_folder = Path(output_dir) / space_id
+    excel_dir = space_folder / "excel"
+    ndjson_dir = space_folder / "ndjson"
+    client_dir = space_folder / "client_summary"
+    excel_dir.mkdir(parents=True, exist_ok=True)
+    ndjson_dir.mkdir(parents=True, exist_ok=True)
+    client_dir.mkdir(parents=True, exist_ok=True)
+
+
+    # Excel
+    excel_path = excel_dir / f"{space_id}.xlsx"
+    write_excel(data, excel_path)
+
+
+    # NDJSON
+    ndjson_path = ndjson_dir / f"{space_id}.ndjson"
+    combined = []
+    for obj_list in data.values():
+        combined.extend(obj_list)
+    write_ndjson(combined, ndjson_path)
+
+
+    # Client Summary Excel
+    dashboards_summary = extract_dashboard_summary(data.get('Dashboards', []))
+    rules_summary = extract_rules_summary(data.get('Rules', []))
+    write_excel({
+        "Dashboards": dashboards_summary,
+        "Rules": rules_summary
+    }, client_dir / "client_summary.xlsx")
+
+
+# ------------------------- Global Summary ---------------------------
+def export_global_summary(summary_data, output_dir):
+    summary_file = Path(output_dir) / "global_summary.xlsx"
+    df = pd.DataFrame(summary_data)
+    df.to_excel(summary_file, index=False)
+
+
+# ------------------------------- Main -----------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Export Kibana space data to Excel and NDJSON")
+    parser.add_argument('--kibana-url', required=True, help='Base URL of Kibana instance')
+    parser.add_argument('--api-key', required=True, help='API Key for authentication')
+    parser.add_argument('--output-dir', required=True, help='Directory to store exported files')
+    args = parser.parse_args()
+
+
+    client = KibanaClient(args.kibana_url, args.api_key)
+    output_dir = args.output_dir
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+
+    logger.info("Fetching spaces...")
+    spaces = client.fetch_spaces()
+
+
+    summary = []
+
+
+    for space in spaces:
+        space_id = space['id']
+        logger.info(f"Processing space: {space_id}")
+
+
+        saved_objects = client.fetch_saved_objects(space_id).get('saved_objects', [])
+        rules = client.fetch_rules(space_id).get('data', [])
+        data_views = client.fetch_data_views(space_id).get('data_view', [])
+
+
+        dashboards = [obj for obj in saved_objects if obj['type'] == 'dashboard']
+
+
+        export_space_data(space_id, {
+            "SavedObjects": saved_objects,
+            "Rules": rules,
+            "DataViews": data_views,
+            "Dashboards": dashboards
+        }, output_dir)
+
+
+        summary.append({
+            "space_id": space_id,
+            "saved_objects": len(saved_objects),
+            "rules": len(rules),
+            "data_views": len(data_views),
+            "dashboards": len(dashboards)
+        })
+
+
+    # Export global summary
+    logger.info("Exporting global summary...")
+    export_global_summary(summary, output_dir)
+
+
+    # Export data streams
+    logger.info("Fetching data streams...")
+    data_streams = client.fetch_data_streams().get('data_streams', [])
+    ds_folder = Path(output_dir) / "datastreams"
+    ds_folder.mkdir(parents=True, exist_ok=True)
+    write_ndjson(data_streams, ds_folder / "datastreams.ndjson")
+    write_excel({"DataStreams": data_streams}, ds_folder / "datastreams.xlsx")
+
+
+    logger.info("Export completed successfully.")
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+	
+
+<output-dir>/
+├── <space_id_1>/
+│   ├── excel/
+│   │   └── <space_id_1>.xlsx                     # All saved objects, rules, dashboards, views
+│   ├── ndjson/
+│   │   └── <space_id_1>.ndjson                   # Combined NDJSON of all objects
+│   └── client_summary/
+│       └── client_summary.xlsx                   # Dashboards + Rules (minimal view for clients)
+├── <space_id_2>/
+│   ├── excel/
+│   ├── ndjson/
+│   └── client_summary/
+├── datastreams/
+│   ├── datastreams.ndjson
+│   └── datastreams.xlsx
+└── global_summary.xlsx                           # Summary for all spaces
+
+
+
+
+
+
+
+
+
+
+Folder
+	File
+	Description
+	excel/
+	space_id.xlsx
+	Full export per space – all saved objects, dashboards, views, rules
+	ndjson/
+	space_id.ndjson
+	One NDJSON with all objects
+	client_summary/
+	client_summary.xlsx
+	Only dashboard + rules details like name, created_by, etc.
+	datastreams/
+	datastreams.ndjson
+	All data streams (not space-specific)
+	datastreams/
+	datastreams.xlsx
+	Same as above in Excel
+	root
+	global_summary.xlsx
+	Overall summary per space: count of rules, dashboards, etc.
