@@ -43,17 +43,16 @@ def export_objects(session, url, export_dir, space, object_types):
     export_url = f"{url}/s/{space_id}/api/saved_objects/_export"
     params = {"type": object_types}
     logging.info(f"Requesting URL: {export_url} with params: {json.dumps(params)}")
-    response = session.post(export_url, json=params, verify=False)
     try:
+        response = session.post(export_url, json=params, verify=False)
         response.raise_for_status()
-    except requests.exceptions.HTTPError as e:
+    except requests.exceptions.RequestException as e:
         logging.error(f"Failed to export objects for space {space_id}: {e}")
-        logging.error(f"Response was: {response.text}")
         return
 
     # Create subdirectories for NDJSON and Excel files
-    ndjson_dir = os.path.join(export_dir, 'ndjson')
-    excel_dir = os.path.join(export_dir, 'excel')
+    ndjson_dir = os.path.join(export_dir, space_id, 'ndjson')
+    excel_dir = os.path.join(export_dir, space_id, 'excel')
     os.makedirs(ndjson_dir, exist_ok=True)
     os.makedirs(excel_dir, exist_ok=True)
 
@@ -68,35 +67,14 @@ def export_objects(session, url, export_dir, space, object_types):
 
 # Function to export objects to Excel
 def export_objects_to_excel(ndjson_content, excel_dir, space_id):
-    # Parse NDJSON content into a list of dictionaries
-    objects = [json.loads(line) for line in ndjson_content.decode('utf-8').splitlines()]
-    # Filter objects to include only dashboards and rules
-    #filtered_objects = [obj for obj in objects if obj['_type'] in ['dashboard', 'rule']]
-
-    # Create a DataFrame from the list of objects
-    df1 = pd.DataFrame(objects)
-
-    # Create a DataFrame from the filtered list of objects
-    # df = pd.DataFrame(filtered_objects)
-
-    # Save the DataFrame to an Excel file
-    excel_path = os.path.join(excel_dir, f"{space_id}_objects.xlsx")
-    df1.to_excel(excel_path, index=False)
-
-    # Select only the required columns
-    #required_columns = ['name', 'created_by', 'updated_by']
-    #df_filtered = df[required_columns]
-
-    # Specify the new folder path for saving the Excel file
-    #new_excel_dir = os.path.join(excel_dir, 'filtered')
-    #os.makedirs(new_excel_dir, exist_ok=True)
-
-    logging.info(f"Exported objects to Excel for space {space_id}: {excel_path}")
-
-    # Save the filtered DataFrame to an Excel file in the new folder
-    # excel_path = os.path.join(new_excel_dir, f"{space_id}_filtered_objects.xlsx")
-    # df_filtered.to_excel(excel_path, index=False)
-    # logging.info(f"Exported filtered objects to Excel for space {space_id}: {excel_path}")
+    try:
+        objects = [json.loads(line) for line in ndjson_content.decode('utf-8').splitlines()]
+        df = pd.DataFrame(objects)
+        excel_path = os.path.join(excel_dir, f"{space_id}_objects.xlsx")
+        df.to_excel(excel_path, index=False)
+        logging.info(f"Exported objects to Excel for space {space_id}: {excel_path}")
+    except Exception as e:
+        logging.error(f"Failed to export to Excel for space {space_id}: {e}")
 
 # Function to validate spaces
 def validate_spaces(spaces, all_spaces):
@@ -123,7 +101,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Prompt for missing arguments
     kibana_url = args.kibana_url or input("Enter Kibana URL (default: https://elastic.sys.dom:5601): ") or DEFAULT_KIBANA_URL
     export_dir = args.export_dir or input("Enter export directory (default: ./export): ") or DEFAULT_EXPORT_DIR
     api_key = args.api_key or input("Enter API key: ")
@@ -137,15 +114,15 @@ def main():
     if not os.path.exists(export_dir):
         os.makedirs(export_dir)
 
-    all_spaces = get_spaces(session, kibana_url)
-
-    # Validate the specified spaces before proceeding
-    validate_spaces(spaces, all_spaces)
-
-    spaces_to_export = all_spaces if not spaces else [space for space in all_spaces if space['id'] in spaces]
-    export_space_details(spaces_to_export, export_dir)
-    for space in spaces_to_export:
-        export_objects(session, kibana_url, export_dir, space, object_types)
+    try:
+        all_spaces = get_spaces(session, kibana_url)
+        validate_spaces(spaces, all_spaces)
+        spaces_to_export = all_spaces if not spaces else [space for space in all_spaces if space['id'] in spaces]
+        export_space_details(spaces_to_export, export_dir)
+        for space in spaces_to_export:
+            export_objects(session, kibana_url, export_dir, space, object_types)
+    except Exception as e:
+        logging.error(f"An error occurred during export: {e}")
 
 if __name__ == "__main__":
     main()
