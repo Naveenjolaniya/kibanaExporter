@@ -6,6 +6,8 @@ import logging
 import os
 import json
 import pandas as pd
+import getpass
+import base64
 
 # Default variables
 DEFAULT_KIBANA_URL = "https://elastic.sys.dom:5601"
@@ -118,23 +120,38 @@ def main():
         epilog="Example: export_kibana.py https://elastic.sys.dom:5601 /path/to/export --spaces space1 space2 --types dashboard visualization")
     parser.add_argument('kibana_url', nargs='?', help="Kibana URL, e.g., https://elastic.sys.dom:5601")
     parser.add_argument('export_dir', nargs='?', help="Directory to save the NDJSON files and space details")
-    parser.add_argument('--types', nargs='+',
-                        help="Specify types of objects to export, separated by spaces (e.g., dashboard visualization). If omitted, all types are exported.")
-    parser.add_argument('--spaces', nargs='+',
-                        help="Specify space IDs to export, separated by spaces (e.g., space1, space2). If omitted, all spaces are exported.")
-    parser.add_argument('--api_key', help="API key for authentication")
+    parser.add_argument('--types', nargs='+', help="Specify types of objects to export, separated by spaces. If omitted, all types are exported.")
+    parser.add_argument('--spaces', nargs='+', help="Specify space IDs to export. If omitted, all spaces are exported.")
 
     args = parser.parse_args()
 
     kibana_url = args.kibana_url or input("Enter Kibana URL (default: https://elastic.sys.dom:5601): ") or DEFAULT_KIBANA_URL
     export_dir = args.export_dir or input("Enter export directory (default: ./export): ") or DEFAULT_EXPORT_DIR
-    api_key = args.api_key or input("Enter API key: ")
+
+    # Prompt for auth method
+    print("Select authentication method:")
+    print("1. API Key")
+    print("2. Username & Password")
+    choice = input("Enter choice (1 or 2): ").strip()
+
+    session = requests.Session()
+    session.headers.update({'kbn-xsrf': 'true'})
+
+    if choice == "1":
+        api_key = input("Enter API key: ")
+        session.headers.update({'Authorization': f'ApiKey {api_key}'})
+    elif choice == "2":
+        username = input("Enter username: ")
+        password = getpass.getpass("Enter password: ")
+        auth_string = f"{username}:{password}"
+        b64_auth = base64.b64encode(auth_string.encode()).decode()
+        session.headers.update({'Authorization': f'Basic {b64_auth}'})
+    else:
+        logging.error("Invalid choice. Exiting.")
+        return
 
     object_types = args.types if args.types else DEFAULT_OBJECT_TYPES
     spaces = args.spaces if args.spaces else DEFAULT_SPACES
-
-    session = requests.Session()
-    session.headers.update({'Authorization': f'ApiKey {api_key}', 'kbn-xsrf': 'true'})
 
     if not os.path.exists(export_dir):
         os.makedirs(export_dir)
