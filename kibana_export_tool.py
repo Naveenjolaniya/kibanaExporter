@@ -37,7 +37,7 @@ def export_space_details(spaces, export_dir):
     logging.info("Exported space details.")
 
 # Function to export objects from spaces
-def export_objects(session, url, export_dir, space, object_types):
+def export_objects(session, url, export_dir, space, object_types, all_summaries):
     logging.info(f"object_types: {object_types}")
     space_id = space['id']
     export_url = f"{url}/s/{space_id}/api/saved_objects/_export"
@@ -63,16 +63,41 @@ def export_objects(session, url, export_dir, space, object_types):
     logging.info(f"Export successful for space {space_id}: {ndjson_path}")
 
     # Export objects to Excel
-    export_objects_to_excel(response.content, excel_dir, space_id)
+    export_objects_to_excel(response.content, excel_dir, space_id, all_summaries)
 
-# Function to export objects to Excel
-def export_objects_to_excel(ndjson_content, excel_dir, space_id):
+# Function to export objects to Excel with sheets and collect summary
+def export_objects_to_excel(ndjson_content, excel_dir, space_id, all_summaries):
     try:
         objects = [json.loads(line) for line in ndjson_content.decode('utf-8').splitlines()]
-        df = pd.DataFrame(objects)
+        df_all = pd.DataFrame(objects)
+
+        dashboards = [obj for obj in objects if obj.get("type") == "dashboard"]
+        rules = [obj for obj in objects if obj.get("type") == "rule"]
+        searches = [obj for obj in objects if obj.get("type") == "search"]
+
+        df_dashboards = pd.DataFrame(dashboards)
+        df_rules = pd.DataFrame(rules)
+        df_searches = pd.DataFrame(searches)
+
+        summary_data = {
+            "space_id": space_id,
+            "dashboard_count": len(dashboards),
+            "rule_count": len(rules),
+            "search_count": len(searches),
+            "total_count": len(objects)
+        }
+        df_summary = pd.DataFrame([summary_data])
+        all_summaries.append(summary_data)
+
         excel_path = os.path.join(excel_dir, f"{space_id}_objects.xlsx")
-        df.to_excel(excel_path, index=False)
-        logging.info(f"Exported objects to Excel for space {space_id}: {excel_path}")
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+            df_all.to_excel(writer, index=False, sheet_name="all_objects")
+            df_dashboards.to_excel(writer, index=False, sheet_name="dashboards")
+            df_rules.to_excel(writer, index=False, sheet_name="rules")
+            df_searches.to_excel(writer, index=False, sheet_name="searches")
+            df_summary.to_excel(writer, index=False, sheet_name="client_summary")
+
+        logging.info(f"Exported objects to Excel with sheets for space {space_id}: {excel_path}")
     except Exception as e:
         logging.error(f"Failed to export to Excel for space {space_id}: {e}")
 
@@ -118,9 +143,20 @@ def main():
         all_spaces = get_spaces(session, kibana_url)
         validate_spaces(spaces, all_spaces)
         spaces_to_export = all_spaces if not spaces else [space for space in all_spaces if space['id'] in spaces]
+
         export_space_details(spaces_to_export, export_dir)
+
+        all_summaries = []
         for space in spaces_to_export:
-            export_objects(session, kibana_url, export_dir, space, object_types)
+            export_objects(session, kibana_url, export_dir, space, object_types, all_summaries)
+
+        # Save global client summary
+        if all_summaries:
+            df_all_summary = pd.DataFrame(all_summaries)
+            summary_path = os.path.join(export_dir, "client_summary.xlsx")
+            df_all_summary.to_excel(summary_path, index=False)
+            logging.info(f"Global client summary saved: {summary_path}")
+
     except Exception as e:
         logging.error(f"An error occurred during export: {e}")
 
