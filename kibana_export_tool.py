@@ -52,19 +52,16 @@ def export_objects(session, url, export_dir, space, object_types, all_summaries)
         logging.error(f"Failed to export objects for space {space_id}: {e}")
         return
 
-    # Create subdirectories for NDJSON and Excel files
     ndjson_dir = os.path.join(export_dir, space_id, 'ndjson')
     excel_dir = os.path.join(export_dir, space_id, 'excel')
     os.makedirs(ndjson_dir, exist_ok=True)
     os.makedirs(excel_dir, exist_ok=True)
 
-    # Save NDJSON file
     ndjson_path = os.path.join(ndjson_dir, f"{space_id}.ndjson")
     with open(ndjson_path, 'wb') as file:
         file.write(response.content)
     logging.info(f"Export successful for space {space_id}: {ndjson_path}")
 
-    # Export objects to Excel
     export_objects_to_excel(response.content, excel_dir, space_id, all_summaries)
 
 # Function to export objects to Excel with sheets and collect summary
@@ -99,6 +96,10 @@ def export_objects_to_excel(ndjson_content, excel_dir, space_id, all_summaries):
             df_searches.to_excel(writer, index=False, sheet_name="searches")
             df_summary.to_excel(writer, index=False, sheet_name="client_summary")
 
+            for obj_type in df_all['type'].unique():
+                df_type = df_all[df_all['type'] == obj_type]
+                df_type.to_excel(writer, index=False, sheet_name=obj_type[:31])  # Excel sheet name limit
+
         logging.info(f"Exported objects to Excel with sheets for space {space_id}: {excel_path}")
     except Exception as e:
         logging.error(f"Failed to export to Excel for space {space_id}: {e}")
@@ -128,7 +129,6 @@ def main():
     kibana_url = args.kibana_url or input("Enter Kibana URL (default: https://elastic.sys.dom:5601): ") or DEFAULT_KIBANA_URL
     export_dir = args.export_dir or input("Enter export directory (default: ./export): ") or DEFAULT_EXPORT_DIR
 
-    # Prompt for auth method
     print("Select authentication method:")
     print("1. API Key")
     print("2. Username & Password")
@@ -167,7 +167,6 @@ def main():
         for space in spaces_to_export:
             export_objects(session, kibana_url, export_dir, space, object_types, all_summaries)
 
-        # Save global client summary
         if all_summaries:
             df_all_summary = pd.DataFrame(all_summaries)
             summary_path = os.path.join(export_dir, "client_summary.xlsx")
